@@ -1,0 +1,6 @@
+streamlit>=1.37
+langchain>=0.2
+langchain-community>=0.2
+chromadb>=0.5
+pydantic>=2
+python-dotenv>=1.0
