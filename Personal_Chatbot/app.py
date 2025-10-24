@@ -29,6 +29,16 @@ VECTOR_DIR = BASE_DIR / ".vectordb"  # Chroma index stored here
 DIARY_DIR.mkdir(exist_ok=True)
 VECTOR_DIR.mkdir(exist_ok=True)
 
+
+# Control how many items we (1) fetch, (2) feed to LLM, (3) display as sources
+RAG_TOP_K = 10  # chunks passed to the LLM (8–12 is typical)
+POOL_K = 32  # candidates pulled from EACH retriever before fusion
+SOURCES_K = 12  # how many fused sources to show under the answer
+RRF_C = 60  # RRF constant
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 100
+
+
 # ---------- Header ----------
 st.title(f"🧠 {APP_NAME} {APP_VERSION}")
 st.caption("Local, private, RAG-powered chat over your daily notes.")
@@ -456,14 +466,6 @@ for msg in st.session_state.chat:
 user_msg = st.chat_input(
     "Ask about your notes (e.g., “What did you do on 03.02.2025?”)"
 )
-
-# Control how many items we (1) fetch, (2) feed to LLM, (3) display as sources
-RAG_TOP_K = 10  # chunks passed to the LLM (8–12 is typical)
-POOL_K = 32  # candidates pulled from EACH retriever before fusion
-SOURCES_K = 12  # how many fused sources to show under the answer
-RRF_C = 60  # RRF constant
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 100
 
 
 if user_msg:
