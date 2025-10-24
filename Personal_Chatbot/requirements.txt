@@ -4,3 +4,4 @@ langchain-community>=0.2
 chromadb>=0.5
 pydantic>=2
 python-dotenv>=1.0
+rank_bm25

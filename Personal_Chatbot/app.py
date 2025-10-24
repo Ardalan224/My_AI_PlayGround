@@ -10,9 +10,13 @@ from langchain_community.chat_models import ChatOllama
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import Chroma
 
+# Keyword retriever
+from langchain_community.retrievers import BM25Retriever
+
+
 # ---------- App & paths ----------
 APP_NAME = "ArdaBrain"
-APP_VERSION = "v0.1"
+APP_VERSION = "v1.0"
 
 st.set_page_config(
     page_title=f"{APP_NAME} {APP_VERSION}", page_icon="🧠", layout="wide"
@@ -96,16 +100,6 @@ def load_diary_files(diary_dir: Path):
 diary_pairs = load_diary_files(DIARY_DIR)
 
 
-# --- Debug: show loaded diary files (optional) ---
-with st.expander("🧾 Debug: Loaded diary files", expanded=False):
-    if not diary_pairs:
-        st.info("No diary files detected in the 'diary/' folder.")
-    else:
-        st.write(f"**{len(diary_pairs)} files loaded:**")
-        for fname, text in diary_pairs:
-            st.markdown(f"- `{fname}` — {len(text.split())} words")
-
-
 # ---------- Parse date from filename (DD.MM.YYYY) ----------
 def parse_date_from_filename(fname: str):
     """Extract DD.MM.YYYY from filenames like 'DD.MM.YYYY.txt' / 'DD_MM_YYYY.txt'."""
@@ -135,9 +129,6 @@ try:
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 except ImportError:
     from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore
-
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 100
 
 
 @st.cache_data(show_spinner=False)
@@ -189,14 +180,6 @@ except ImportError:
 def to_lc_documents(chunks):
     """LangChain Documents with display, ISO, and ordinal (int) dates in metadata."""
 
-    def to_iso(ddmmyyyy):
-        if not ddmmyyyy:
-            return None
-        try:
-            return datetime.strptime(ddmmyyyy, "%d.%m.%Y").date().isoformat()
-        except Exception:
-            return None
-
     def to_ord(ddmmyyyy):
         """DD.MM.YYYY -> int YYYYMMDD (e.g., 20251015), or None."""
         if not ddmmyyyy:
@@ -214,7 +197,6 @@ def to_lc_documents(chunks):
                 page_content=c["content"],
                 metadata={
                     "date": dd,  # e.g., 03.02.2025 (for display)
-                    "date_iso": to_iso(dd),  # e.g., 2025-02-03 (string)
                     "date_ord": to_ord(dd),  # e.g., 20250203 (INT for filtering)
                     "source": c.get("source"),
                     "chunk_id": c.get("chunk_id"),
@@ -225,6 +207,13 @@ def to_lc_documents(chunks):
 
 
 lc_docs = to_lc_documents(chunked)
+
+
+# Build BM25 (keyword) retriever once per session
+# --- Build BM25 keyword retriever once per session ---
+if "bm25" not in st.session_state:
+    st.session_state["bm25"] = BM25Retriever.from_documents(lc_docs)
+bm25_retriever = st.session_state["bm25"]
 
 
 # ---------- Build / load vector index (once per session) ----------
@@ -239,21 +228,22 @@ def build_vector_index(documents, embedding_fn, persist_dir: Path):
     return vs
 
 
-@st.cache_resource(show_spinner=False)
-def open_vectorstore(persist_dir: Path, embedding_fn):
-    """Open an existing Chroma index from disk."""
-    return Chroma(persist_directory=str(persist_dir), embedding_function=embedding_fn)
-
-
 # Build the index only once per session; reuse thereafter
 if "vectorstore" not in st.session_state:
-    with st.spinner("Indexing diary into Chroma…"):
-        vs = build_vector_index(lc_docs, embeddings, VECTOR_DIR)
-        st.session_state["vectorstore"] = vs
-        st.success(f"Indexed {len(lc_docs)} chunks.")
+    if not lc_docs:
+        st.info(
+            "No diary content found yet. Add some `.txt` files to `diary/` and refresh."
+        )
+    else:
+        with st.spinner("Indexing diary into Chroma…"):
+            vs = build_vector_index(lc_docs, embeddings, VECTOR_DIR)
+            st.session_state["vectorstore"] = vs
+            st.success(f"Indexed {len(lc_docs)} chunks.")
 
 # Use the session-scoped instance everywhere below
-vectorstore = st.session_state["vectorstore"]
+vectorstore = st.session_state.get("vectorstore")
+if vectorstore is None:
+    st.stop()  # avoid running chat logic with no index
 
 
 # ---------- Date utilities & filter ----------
@@ -347,6 +337,103 @@ def push_welcome():
     st.session_state.chat.append({"role": "assistant", "content": welcome})
 
 
+def _doc_key(d):
+    m = d.metadata or {}
+    return f"{m.get('source','?')}#{m.get('chunk_id',-1)}"
+
+
+def rrf_fuse(vec_docs, bm25_docs, final_k=3, C=60):
+    """
+    Reciprocal Rank Fusion (RRF).
+    vec_docs: list[Document]      (we’ll pass in doc-only list)
+    bm25_docs: list[Document]
+    final_k: how many to return
+    """
+    ranks = {}
+    order = []
+
+    # assign ranks (starting at 1) to each list
+    for rank, d in enumerate(vec_docs, start=1):
+        k = _doc_key(d)
+        ranks.setdefault(k, [None, None])
+        ranks[k][0] = rank
+        if k not in order:
+            order.append(k)
+
+    for rank, d in enumerate(bm25_docs, start=1):
+        k = _doc_key(d)
+        ranks.setdefault(k, [None, None])
+        ranks[k][1] = rank
+        if k not in order:
+            order.append(k)
+
+    # compute RRF score
+    scores = {}
+    by_key = {_doc_key(d): d for d in (vec_docs + bm25_docs)}
+    for k in order:
+        r_vec, r_kw = ranks[k]
+        score = 0.0
+        if r_vec is not None:
+            score += 1.0 / (C + r_vec)
+        if r_kw is not None:
+            score += 1.0 / (C + r_kw)
+        scores[k] = score
+
+    # sort by fused score, desc
+    ranked_keys = sorted(order, key=lambda k: scores[k], reverse=True)
+    out = []
+    for k in ranked_keys[:final_k]:
+        out.append(by_key[k])
+    return out
+
+
+def date_ord_range_for_ui(mode: str, custom_start: str | None, custom_end: str | None):
+    """Return (start_ord, end_ord) or (None, None) if no filter is active."""
+    if mode == "No filter":
+        return (None, None)
+    if mode == "Last 7 days":
+        start_d, end_d = last_n_days_range(7)
+    elif mode == "Last 30 days":
+        start_d, end_d = last_n_days_range(30)
+    elif mode == "Custom range":
+        sd = parse_ddmmyyyy(custom_start or "")
+        ed = parse_ddmmyyyy(custom_end or "")
+        if not sd or not ed:
+            return (None, None)
+        if sd > ed:
+            sd, ed = ed, sd
+        start_d, end_d = sd, ed
+    else:
+        return (None, None)
+
+    return (int(start_d.strftime("%Y%m%d")), int(end_d.strftime("%Y%m%d")))
+
+
+def filter_docs_by_ord(docs, start_ord: int | None, end_ord: int | None):
+    """Keep docs whose metadata.date_ord is within [start_ord, end_ord]. If no range -> return as-is."""
+    if start_ord is None or end_ord is None:
+        return docs
+    out = []
+    for d in docs:
+        ord_v = (d.metadata or {}).get("date_ord")
+        if isinstance(ord_v, int) and start_ord <= ord_v <= end_ord:
+            out.append(d)
+    return out
+
+
+def dedup_by_source(docs, limit):
+    out, seen = [], set()
+    for d in docs:
+        src = (d.metadata or {}).get("source")
+        if src in seen:
+            continue
+        seen.add(src)
+        out.append(d)
+        if len(out) >= limit:
+            break
+    return out
+
+
 # ---------- Chat UI ----------
 if "chat" not in st.session_state:
     st.session_state.chat = []
@@ -366,8 +453,18 @@ for msg in st.session_state.chat:
         st.write(msg["content"])
 
 # Input
-user_msg = st.chat_input("Ask about your notes (e.g., “What did I do on 03.02.2025?”)")
-RAG_TOP_K = 10
+user_msg = st.chat_input(
+    "Ask about your notes (e.g., “What did you do on 03.02.2025?”)"
+)
+
+# Control how many items we (1) fetch, (2) feed to LLM, (3) display as sources
+RAG_TOP_K = 10  # chunks passed to the LLM (8–12 is typical)
+POOL_K = 32  # candidates pulled from EACH retriever before fusion
+SOURCES_K = 12  # how many fused sources to show under the answer
+RRF_C = 60  # RRF constant
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 100
+
 
 if user_msg:
     st.session_state.chat.append({"role": "user", "content": user_msg})
@@ -377,32 +474,103 @@ if user_msg:
     with st.chat_message("assistant"):
         with st.spinner("Thinking with your diary…"):
             try:
+                # Date filter for vector side (Chroma) + numeric range for keyword side
                 date_filter = build_chroma_date_filter(
                     date_filter_mode, custom_start, custom_end
                 )
-                retrieved = vectorstore.max_marginal_relevance_search(
+                start_ord, end_ord = date_ord_range_for_ui(
+                    date_filter_mode, custom_start, custom_end
+                )
+
+                # If the user typed an explicit date (DD.MM.YYYY), respect the active UI filter
+                m = re.search(r"\b(\d{2}\.\d{2}\.\d{4})\b", user_msg)
+                if m:
+                    try:
+                        ord_v = int(
+                            datetime.strptime(m.group(1), "%d.%m.%Y").strftime("%Y%m%d")
+                        )
+
+                        if start_ord is None or end_ord is None:
+                            # No UI range active -> lock to the exact date from the prompt
+                            date_filter = {
+                                "$and": [
+                                    {"date_ord": {"$gte": ord_v}},
+                                    {"date_ord": {"$lte": ord_v}},
+                                ]
+                            }
+                            start_ord = end_ord = ord_v
+                        else:
+                            # UI range is active -> only lock if the prompt date is inside that range
+                            if start_ord <= ord_v <= end_ord:
+                                date_filter = {
+                                    "$and": [
+                                        {"date_ord": {"$gte": ord_v}},
+                                        {"date_ord": {"$lte": ord_v}},
+                                    ]
+                                }
+                                start_ord = end_ord = ord_v
+                            else:
+                                # Prompt date is outside the current filter -> inform and end this turn
+                                msg = (
+                                    f"The date **{m.group(1)}** is outside your current date filter. "
+                                    f"Please adjust the *Date filter* in the sidebar or ask without a specific date."
+                                )
+                                st.write(msg)
+                                st.session_state.chat.append(
+                                    {"role": "assistant", "content": msg}
+                                )
+                                st.stop()  # cleanly end this run/turn
+                    except Exception:
+                        # If parsing fails, keep the original filters
+                        pass
+
+                # 1) Vector candidates (semantic)
+                vec_candidates = vectorstore.similarity_search(
                     user_msg,
-                    k=RAG_TOP_K,  # final number of results you want
-                    fetch_k=32,  # candidate pool to diversify from
-                    lambda_mult=0.5,  # 0 = more diversity, 1 = more similarity
+                    k=POOL_K,
                     filter=date_filter,
                 )
 
-                prompt_text = build_prompt(user_msg, retrieved)
-                resp = llm.invoke(prompt_text)
-                answer = resp.content
-                st.write(answer)
+                # 2) Keyword candidates (BM25) — then Python-side date filter
+                try:
+                    bm25_docs = bm25_retriever.invoke(user_msg)  # new LC interface
+                except AttributeError:
+                    bm25_docs = bm25_retriever.get_relevant_documents(
+                        user_msg
+                    )  # fallback for older LC
 
-                # Show sources for transparency
-                if retrieved:
-                    st.markdown("**Sources**")
-                    for i, d in enumerate(retrieved, start=1):
+                bm25_candidates = bm25_docs[:POOL_K]
+                bm25_candidates = filter_docs_by_ord(
+                    bm25_candidates, start_ord, end_ord
+                )
+
+                # 3) Fuse with RRF → keep more for display; fewer for LLM
+                retrieved_all = rrf_fuse(
+                    vec_candidates, bm25_candidates, final_k=SOURCES_K, C=RRF_C
+                )
+                retrieved_for_llm = retrieved_all[:RAG_TOP_K]
+
+                # Build prompt from the LLM subset and call the model
+                prompt_text = build_prompt(user_msg, retrieved_for_llm)
+                resp = llm.invoke(prompt_text)
+                answer_text = resp.content
+                st.write(answer_text)
+
+                # --- Show ONLY the snippets the LLM actually saw (dedup by file for clarity) ---
+                sources_to_show = dedup_by_source(retrieved_for_llm, limit=RAG_TOP_K)
+
+                if sources_to_show:
+                    st.markdown("**Sources used**")
+                    for i, d in enumerate(sources_to_show, start=1):
                         meta = d.metadata or {}
                         st.markdown(
-                            f"- **[{i}]** `{meta.get('source', 'unknown')}` — `{meta.get('date', 'N/A')}`"
+                            f"- **[{i}]** `{meta.get('source','unknown')}` — `{meta.get('date','N/A')}`"
                         )
 
-                st.session_state.chat.append({"role": "assistant", "content": answer})
+                # Save assistant turn
+                st.session_state.chat.append(
+                    {"role": "assistant", "content": answer_text}
+                )
 
             except Exception as e:
                 err = f"RAG chat failed: {e}"
