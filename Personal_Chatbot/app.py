@@ -96,6 +96,16 @@ def load_diary_files(diary_dir: Path):
 diary_pairs = load_diary_files(DIARY_DIR)
 
 
+# --- Debug: show loaded diary files (optional) ---
+with st.expander("🧾 Debug: Loaded diary files", expanded=False):
+    if not diary_pairs:
+        st.info("No diary files detected in the 'diary/' folder.")
+    else:
+        st.write(f"**{len(diary_pairs)} files loaded:**")
+        for fname, text in diary_pairs:
+            st.markdown(f"- `{fname}` — {len(text.split())} words")
+
+
 # ---------- Parse date from filename (DD.MM.YYYY) ----------
 def parse_date_from_filename(fname: str):
     """Extract DD.MM.YYYY from filenames like 'DD.MM.YYYY.txt' / 'DD_MM_YYYY.txt'."""
@@ -132,20 +142,32 @@ CHUNK_OVERLAP = 100
 
 @st.cache_data(show_spinner=False)
 def chunk_docs(docs):
-    """Split each doc into overlapping chunks; keep metadata."""
+    """
+    Split each doc's content into overlapping chunks and
+    PREPEND the file's date (DD.MM.YYYY) to the beginning of EVERY chunk.
+    """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
+
     out = []
     for d in docs:
+        date_str = d.get("date")  # 'DD.MM.YYYY' or None
         parts = splitter.split_text(d["content"])
+
         for i, part in enumerate(parts):
+            # Prefix the date on its own line so it’s part of the embedding
+            if date_str:
+                chunk_text = f"{date_str}\n{part}"
+            else:
+                chunk_text = part
+
             out.append(
                 {
-                    "content": part,
-                    "date": d.get("date"),
+                    "content": chunk_text,
+                    "date": date_str,
                     "source": d.get("source"),
                     "chunk_id": i,
                 }
@@ -154,6 +176,7 @@ def chunk_docs(docs):
 
 
 chunked = chunk_docs(docs) if docs else []
+
 
 # ---------- Convert chunks -> LangChain Documents ----------
 try:
@@ -344,7 +367,7 @@ for msg in st.session_state.chat:
 
 # Input
 user_msg = st.chat_input("Ask about your notes (e.g., “What did I do on 03.02.2025?”)")
-RAG_TOP_K = 3
+RAG_TOP_K = 10
 
 if user_msg:
     st.session_state.chat.append({"role": "user", "content": user_msg})
