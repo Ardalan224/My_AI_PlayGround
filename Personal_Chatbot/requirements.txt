@@ -5,3 +5,6 @@ chromadb>=0.5
 pydantic>=2
 python-dotenv>=1.0
 rank_bm25
+python-telegram-bot==21.*
+python-dotenv
+tzdata
