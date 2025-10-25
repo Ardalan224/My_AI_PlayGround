@@ -1,4 +1,18 @@
+# Python / env
+.venv/
 venv/
-diary/
+__pycache__/
+*.pyc
+
+# Streamlit / OS clutter (optional)
+.DS_Store
+
+# Chroma index
 .vectordb/
-telegram_bot/.env
+
+# Diary: ignore everything inside, but keep the folder itself via .gitkeep
+/diary/*
+!/diary/.gitkeep
+
+# Telegram bot secrets
+/telegram_bot/.env
