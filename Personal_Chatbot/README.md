@@ -73,7 +73,7 @@ DIARY_DIR=C:/path/to/your/diary
 Run the bot:
 
 cd telegram_bot
-python bot.py
+python telegram_bot.py
 
 
 Open your Telegram app, find your bot, and send it a message.
