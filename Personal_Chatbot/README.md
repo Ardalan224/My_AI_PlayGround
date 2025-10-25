@@ -1,10 +1,10 @@
-🧠 ArdaBrain — Your Private Diary Chatbot
+## 🧠 ArdaBrain — Your Private Diary Chatbot
 
 ArdaBrain is a local, privacy-focused chatbot that lets you chat with your personal memories.
 It reads your daily text notes from the diary/ folder and uses local LLMs (via Ollama) to recall what you’ve written — no internet or external APIs required.
 
-🚀 Quick Start
-1️⃣ Requirements
+## 🚀 Quick Start
+## 1️⃣ Requirements
 
 Make sure you have:
 
@@ -16,11 +16,11 @@ Ollama
  installed and running locally
 (used for both embeddings and chat model)
 
-Install dependencies:
+# Install dependencies:
 
 pip install -r requirements.txt
 
-2️⃣ Add Your Diary Notes
+## 2️⃣ Add Your Diary Notes
 
 Place your text files inside the diary/ folder.
 
@@ -36,7 +36,7 @@ diary/
 
 Each file can contain any text you want — thoughts, memories, or daily logs.
 
-3️⃣ Run the Chatbot App
+## 3️⃣ Run the Chatbot App
 
 Launch the Streamlit interface:
 
@@ -54,7 +54,7 @@ You can ask questions like:
 
 Everything runs completely offline.
 
-💬 Optional: Add Memories via Telegram
+## 💬 Optional: Add Memories via Telegram
 
 You can also add daily memories from your phone using Telegram.
 
@@ -93,7 +93,7 @@ Or even rename the app in the header line:
 
 APP_NAME = "ArdaBrain"
 
-📝 Notes
+## 📝 Notes
 
 The vector index rebuilds automatically when the app starts.
 
