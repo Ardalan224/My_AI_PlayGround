@@ -4,6 +4,7 @@ import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+import shutil
 
 import streamlit as st
 from langchain_community.chat_models import ChatOllama
@@ -16,7 +17,7 @@ from langchain_community.retrievers import BM25Retriever
 
 # ---------- App & paths ----------
 APP_NAME = "ArdaBrain"
-APP_VERSION = "v1.0"
+APP_VERSION = "v1.1"
 
 st.set_page_config(
     page_title=f"{APP_NAME} {APP_VERSION}", page_icon="🧠", layout="wide"
@@ -219,41 +220,44 @@ def to_lc_documents(chunks):
 lc_docs = to_lc_documents(chunked)
 
 
-# Build BM25 (keyword) retriever once per session
-# --- Build BM25 keyword retriever once per session ---
-if "bm25" not in st.session_state:
-    st.session_state["bm25"] = BM25Retriever.from_documents(lc_docs)
-bm25_retriever = st.session_state["bm25"]
+# --- Rebuild vector index + BM25 once per session from CURRENT diary files ---
+# (Make sure you have: import shutil  at the top of the file)
 
+if "vectorstore" not in st.session_state or "bm25" not in st.session_state:
+    # Hard reset the persisted Chroma folder so deleted notes don't linger
+    if VECTOR_DIR.exists():
+        shutil.rmtree(VECTOR_DIR)
+    VECTOR_DIR.mkdir(exist_ok=True)
 
-# ---------- Build / load vector index (once per session) ----------
-def build_vector_index(documents, embedding_fn, persist_dir: Path):
-    """Fresh build of Chroma from documents; persists to disk and returns the store."""
-    vs = Chroma.from_documents(
-        documents=documents,
-        embedding=embedding_fn,
-        persist_directory=str(persist_dir),
-    )
-    vs.persist()
-    return vs
-
-
-# Build the index only once per session; reuse thereafter
-if "vectorstore" not in st.session_state:
     if not lc_docs:
         st.info(
             "No diary content found yet. Add some `.txt` files to `diary/` and refresh."
         )
-    else:
-        with st.spinner("Indexing diary into Chroma…"):
-            vs = build_vector_index(lc_docs, embeddings, VECTOR_DIR)
-            st.session_state["vectorstore"] = vs
-            st.success(f"Indexed {len(lc_docs)} chunks.")
+        st.session_state["vectorstore"] = None
+        st.session_state["bm25"] = None
+        st.stop()
 
-# Use the session-scoped instance everywhere below
-vectorstore = st.session_state.get("vectorstore")
-if vectorstore is None:
-    st.stop()  # avoid running chat logic with no index
+    with st.spinner("Indexing diary into Chroma…"):
+        vectorstore = Chroma.from_documents(
+            documents=lc_docs,
+            embedding=embeddings,
+            persist_directory=str(VECTOR_DIR),
+            collection_name="diary",  # optional, just clearer
+        )
+        vectorstore.persist()
+        st.success(f"Indexed {len(lc_docs)} chunks.")
+
+    # Build BM25 from the SAME current docs so both retrievers stay in sync
+    st.session_state["vectorstore"] = vectorstore
+    st.session_state["bm25"] = BM25Retriever.from_documents(lc_docs)
+
+# Use session-scoped instances below
+vectorstore = st.session_state["vectorstore"]
+bm25_retriever = st.session_state["bm25"]
+
+# If somehow still missing, stop to avoid errors
+if vectorstore is None or bm25_retriever is None:
+    st.stop()
 
 
 # ---------- Date utilities & filter ----------
@@ -332,7 +336,7 @@ def build_prompt(user_q, docs):
         " - If you mention a date, COPY the exact DATE_STR value verbatim (format: DD.MM.YYYY). Do NOT convert to month names.\n"
         " - If the answer isn't in the snippets, say: \"I don't remember this.\"\n"
         " - Prefer mentioning specific DATE_STR values when relevant.\n"
-        " - Keep answers brief and factual.\n"
+        " - Keep answers factual.\n"
         " - Avoid phrases like 'according to the snippets'—just answer as me.\n\n"
         f"MY DIARY SNIPPETS:\n{context_block}\n\n"
         f"QUESTION: {user_q}\n"
@@ -474,7 +478,7 @@ if user_msg:
         st.write(user_msg)
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking with your diary…"):
+        with st.spinner("Thinking…"):
             try:
                 # Date filter for vector side (Chroma) + numeric range for keyword side
                 date_filter = build_chroma_date_filter(

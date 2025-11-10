@@ -77,7 +77,8 @@ python telegram_bot.py
 
 
 Open your Telegram app, find your bot, and send it a message.
-Every message you send will be saved as a .txt file in your diary folder — named automatically by date (e.g. 24.10.2025.txt).
+The bot will ask whether this memory belongs to today’s date or another date.
+After you confirm, it saves your message as a .txt file in your diary folder — named by the chosen date (e.g. 24.10.2025.txt).
 
 🛡️ The bot runs locally on your computer — it doesn’t expose your PC to the internet.
 

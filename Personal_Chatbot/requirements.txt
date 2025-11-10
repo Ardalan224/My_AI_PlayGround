@@ -8,3 +8,4 @@ rank_bm25
 python-telegram-bot==21.*
 python-dotenv
 tzdata
+pyzipper

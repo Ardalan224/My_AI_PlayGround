@@ -11,6 +11,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     filters,
+    ConversationHandler,
 )
 
 # --- Load secrets & settings ---
@@ -24,6 +25,9 @@ DIARY_DIR.mkdir(parents=True, exist_ok=True)
 
 TZ = ZoneInfo("Europe/Berlin")  # keep filenames consistent with your app
 
+# --- Conversation states ---
+CHOOSING_DATE, ENTERING_DATE = range(2)
+
 
 # --- Helpers ---
 def today_filename() -> Path:
@@ -36,13 +40,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ALLOWED_USER_ID:
         return  # ignore strangers silently
     await update.message.reply_text(
-        "Hi! Send me today's memory as one message.\n"
-        "I'll save it to your diary as DD.MM.YYYY.txt (Europe/Berlin)."
+        "Hi! Send me your memory as one message.\n"
+        "After sending it, I’ll ask if it belongs to today or another date."
     )
 
 
 async def save_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Only accept plain text from the allowed user
+    # Step 1: receive the memory text
     if update.effective_user.id != ALLOWED_USER_ID:
         return
 
@@ -51,20 +55,61 @@ async def save_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Please send plain text.")
         return
 
-    path = today_filename()
+    # Store temporarily in user_data
+    context.user_data["pending_message"] = msg
 
-    # Choose overwrite OR append:
-    OVERWRITE_EACH_DAY = (
-        True  # set False if you want to append multiple entries per day
+    today_str = datetime.now(TZ).strftime("%d.%m.%Y")
+    await update.message.reply_text(
+        f"Should I save this entry for today ({today_str}) or another date?\n"
+        "Reply with 'today' or 'another'."
     )
+    return CHOOSING_DATE
 
+
+async def choose_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Step 2: handle user’s choice (today or another)
+    choice = (update.message.text or "").strip().lower()
+    if choice == "today":
+        date_str = datetime.now(TZ).strftime("%d.%m.%Y")
+        context.user_data["chosen_date"] = date_str
+        return await save_entry(update, context)
+    elif choice == "another":
+        await update.message.reply_text("Please enter the date in DD.MM.YYYY format:")
+        return ENTERING_DATE
+    else:
+        await update.message.reply_text("Please reply with 'today' or 'another'.")
+        return CHOOSING_DATE
+
+
+async def enter_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Step 3: receive custom date input
+    date_str = (update.message.text or "").strip()
+    try:
+        datetime.strptime(date_str, "%d.%m.%Y")  # validate format
+    except ValueError:
+        await update.message.reply_text("Invalid format. Please use DD.MM.YYYY.")
+        return ENTERING_DATE
+
+    context.user_data["chosen_date"] = date_str
+    return await save_entry(update, context)
+
+
+async def save_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Step 4: actually save the entry to file
+    msg = context.user_data.pop("pending_message", "")
+    date_str = context.user_data.pop("chosen_date", "")
+    path = DIARY_DIR / f"{date_str}.txt"
+
+    OVERWRITE_EACH_DAY = True  # set False if you want to append instead
     if OVERWRITE_EACH_DAY:
         path.write_text(msg + "\n", encoding="utf-8")
-        await update.message.reply_text(f"Saved today's entry (overwrote): {path.name}")
+        await update.message.reply_text(f"Saved entry (overwrote): {path.name}")
     else:
         with path.open("a", encoding="utf-8") as f:
             f.write(msg + "\n\n")
         await update.message.reply_text(f"Appended to: {path.name}")
+
+    return ConversationHandler.END
 
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -82,12 +127,23 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
+    conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, save_memory)],
+        states={
+            CHOOSING_DATE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, choose_date)
+            ],
+            ENTERING_DATE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, enter_date)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", start)],
+    )
+
     app.add_handler(CommandHandler("start", start))
-    # Only accept TEXT messages, ignore commands/media
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, save_memory))
+    app.add_handler(conv_handler)
     app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
-    # Polling = safe: only outbound HTTPS to Telegram
     app.run_polling(close_loop=False)
 
 
