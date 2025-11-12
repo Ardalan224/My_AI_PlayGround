@@ -8,13 +8,10 @@ It reads your daily text notes from the diary/ folder and uses local LLMs (via O
 
 Make sure you have:
 
-Python 3.11+
-
-Streamlit
-
-Ollama
- installed and running locally
-(used for both embeddings and chat model)
+- Python 3.11+
+- Streamlit
+- [Ollama](https://ollama.com/) installed and running locally
+  (used for both embeddings and chat model)
 
 # Install dependencies:
 
