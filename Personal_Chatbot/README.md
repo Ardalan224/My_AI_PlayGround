@@ -63,8 +63,11 @@ Create a Telegram Bot using @BotFather
 
 Create a .env file in the telegram_bot/ folder:
 
-TELEGRAM_TOKEN=YOUR_BOT_TOKEN_HERE
-DIARY_DIR=C:/path/to/your/diary
+TELEGRAM_BOT_TOKEN= # telegram bot token from BotFather
+
+ALLOWED_USER_ID= # your Telegram user_id (int number)
+
+DIARY_DIR= # absolute path to the diary/ directory
 
 
 Run the bot:
