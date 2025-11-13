@@ -97,7 +97,7 @@ APP_NAME = "ArdaBrain"
 
 ## 🐳 Run with Docker
 
-You can also run both components (chatbot + Telegram bot) via Docker.
+You can also run Telegram bot via Docker.
 
 ## 📁 Directory Setup
 
@@ -106,7 +106,7 @@ Create a structure like this:
 ```bash
 diary_test/
 ├── diary/           # where your .txt memories are stored
-├── chatbot/         # optional local folder or empty
+├
 └── telegram_bot/
     └── .env         # contains your Telegram bot configs
 ```
@@ -118,30 +118,6 @@ ALLOWED_USER_ID=your_telegram_user_id
 DIARY_DIR=/absolute/path/to/diary
 
 
-
-## 🧠 Run the Chatbot App (Docker)
-
-## Linux / macOS:
-
-```bash
-docker pull ardalan22/my-public-repo:personal_diary_chatbot_app
-
-docker run -d -p 8501:8501 \
-  -v "$(pwd)/diary:/app/diary" \
-  ardalan22/my-public-repo:personal_diary_chatbot_app
-```
-
-## Windows (PowerShell):
-```bash
-docker pull ardalan22/my-public-repo:personal_diary_chatbot_app
-
-docker run -d -p 8501:8501 `
-  -v "${PWD}\diary:/app/diary" `
-  ardalan22/my-public-repo:personal_diary_chatbot_app
-```
-
-Then open http://localhost:8501
- in your browser.
 
 ## 💬 Run the Telegram Bot (Docker)
 
