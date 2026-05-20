@@ -23,7 +23,7 @@ DIARY_DIR = Path(os.getenv("DIARY_DIR", "./diary")).resolve()
 # Safety: ensure diary dir exists and is inside your project (no traversal)
 DIARY_DIR.mkdir(parents=True, exist_ok=True)
 
-TZ = ZoneInfo("Europe/Berlin")  # keep filenames consistent with your app
+TZ = ZoneInfo("Asia/Tehran")  # keep filenames consistent with your app
 
 # --- Conversation states ---
 CHOOSING_DATE, ENTERING_DATE = range(2)
